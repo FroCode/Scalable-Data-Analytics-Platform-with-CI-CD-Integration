@@ -1,2 +1,2 @@
-# Building a Scalable Data Analytics Platform
+# Scalable Data Analytics Platform
  
