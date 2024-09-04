@@ -1,3 +1,9 @@
+# Ignore environment configuration files
 .env
+
+# Ignore specific text files
 /Steps.txt
 /commands.txt
+
+# Ignore large Terraform provider file
+terraform/.terraform/*
