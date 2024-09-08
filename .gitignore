@@ -7,3 +7,13 @@
 
 # Ignore large Terraform provider file
 terraform/.terraform/*
+*.tfstate
+*.tfstate.backup
+*.tfplan
+*.tfvars
+*.tfvars.json
+.terraform.lock.hcl
+
+
+/second-test-ec2.pem
+/.vscode
