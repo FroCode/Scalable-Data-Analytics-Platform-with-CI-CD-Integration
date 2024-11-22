@@ -1,0 +1,14 @@
+airflow:
+  image:
+    repository: apache/airflow
+    tag: 2.7.0
+  executor: CeleryExecutor
+  service:
+    type: LoadBalancer
+  web:
+    service:
+      type: LoadBalancer
+  scheduler:
+    replicas: 1
+  worker:
+    replicas: 2

@@ -1,3 +1,5 @@
+# ---------------------- VPC Setup ---------------------- #
+
 # Create VPC
 resource "aws_vpc" "main_vpc" {
   cidr_block           = var.vpc_cidr
@@ -10,9 +12,9 @@ resource "aws_vpc" "main_vpc" {
 
 # Create Public Subnet
 resource "aws_subnet" "public_subnet" {
-  vpc_id            = aws_vpc.main_vpc.id
-  cidr_block        = var.public_subnet_cidr
-  availability_zone = var.azs[0]
+  vpc_id                  = aws_vpc.main_vpc.id
+  cidr_block              = var.public_subnet_cidr
+  availability_zone       = var.azs[0]
   map_public_ip_on_launch = true
   tags = {
     Name = "Public Subnet"
@@ -55,7 +57,7 @@ resource "aws_route_table_association" "public_route_association" {
   route_table_id = aws_route_table.public_route_table.id
 }
 
-# Allocate a new Elastic IP
+# Allocate a new Elastic IP for NAT Gateway
 resource "aws_eip" "nat_eip" {
   domain = "vpc"
   tags = {
@@ -63,7 +65,7 @@ resource "aws_eip" "nat_eip" {
   }
 }
 
-# Create NAT Gateway using the newly allocated Elastic IP
+# Create NAT Gateway using the Elastic IP
 resource "aws_nat_gateway" "nat_gateway" {
   allocation_id = aws_eip.nat_eip.id
   subnet_id     = aws_subnet.public_subnet.id
@@ -90,55 +92,135 @@ resource "aws_route_table_association" "private_route_association" {
   route_table_id = aws_route_table.private_route_table.id
 }
 
-# Create Security Group
-resource "aws_security_group" "ec2_sg" {
-  vpc_id = aws_vpc.main_vpc.id
+# ---------------------- EKS Setup ---------------------- #
 
-  egress {
-    from_port   = 0
-    to_port     = 0
-    protocol    = "-1"
-    cidr_blocks = ["0.0.0.0/0"]
+# EKS Cluster Role
+resource "aws_iam_role" "eks_role" {
+  name = "eks-cluster-role"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Action    = "sts:AssumeRole"
+      Effect    = "Allow"
+      Principal = {
+        Service = "eks.amazonaws.com"
+      }
+    }]
+  })
+}
+
+# Attach Policy to EKS Role
+resource "aws_iam_role_policy_attachment" "eks_attach" {
+  role       = aws_iam_role.eks_role.name
+  policy_arn = "arn:aws:iam::aws:policy/AmazonEKSClusterPolicy"
+}
+
+# EKS Node Group Role
+resource "aws_iam_role" "node_group_role" {
+  name = "eks-node-group-role"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Action    = "sts:AssumeRole"
+      Effect    = "Allow"
+      Principal = {
+        Service = "ec2.amazonaws.com"
+      }
+    }]
+  })
+}
+
+# Attach Policy to Node Group Role
+resource "aws_iam_role_policy_attachment" "node_group_attach" {
+  role       = aws_iam_role.node_group_role.name
+  policy_arn = "arn:aws:iam::aws:policy/AmazonEKSWorkerNodePolicy"
+}
+
+# EKS Cluster
+resource "aws_eks_cluster" "eks_cluster" {
+  name     = "my-eks-cluster"
+  role_arn = aws_iam_role.eks_role.arn
+
+  vpc_config {
+    subnet_ids = [aws_subnet.public_subnet.id, aws_subnet.private_subnet.id]
   }
 
-  ingress {
-    from_port   = 22
-    to_port     = 22
-    protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]  # Open port 22 for SSH
+  depends_on = [aws_iam_role_policy_attachment.eks_attach]
+}
+
+# EKS Node Group
+resource "aws_eks_node_group" "node_group" {
+  cluster_name    = aws_eks_cluster.eks_cluster.name
+  node_role_arn   = aws_iam_role.node_group_role.arn
+  subnet_ids = [aws_subnet.public_subnet.id]
+
+  scaling_config {
+    desired_size = 2
+    max_size     = 3
+    min_size     = 1
   }
 
-  tags = {
-    Name = "EC2 Security Group"
+  depends_on = [aws_eks_cluster.eks_cluster]
+}
+
+# ---------------------- Kubernetes (EKS) Setup ---------------------- #
+
+# EKS Auth Data
+data "aws_eks_cluster_auth" "eks_auth" {
+  name = aws_eks_cluster.eks_cluster.name
+}
+
+# Kubernetes provider configuration
+provider "kubernetes" {
+  host                   = aws_eks_cluster.eks_cluster.endpoint
+  cluster_ca_certificate = base64decode(aws_eks_cluster.eks_cluster.certificate_authority[0].data)
+  token                  = data.aws_eks_cluster_auth.eks_auth.token
+}
+
+# Namespace for Spark in Kubernetes
+resource "kubernetes_namespace" "spark_namespace" {
+  metadata {
+    name = "spark-namespace"
   }
 }
 
-# Create EC2 Instance
-resource "aws_instance" "example" {
-  ami           = "ami-04f76ebf53292ef4d"  # Example AMI, replace with the desired AMI ID
-  instance_type = "t2.micro"
-  key_name      = "second-test-ec2"  # Reference the key pair without the `.pem` extension
-  subnet_id     = aws_subnet.public_subnet.id
-  vpc_security_group_ids = [aws_security_group.ec2_sg.id]
+# ---------------------- Spark Worker Deployment ---------------------- #
 
-
-  tags = {
-    Name = "MyEC2Instance"
+# Spark Worker Deployment
+resource "kubernetes_deployment" "spark_worker" {
+  metadata {
+    name      = "spark-worker"
+    namespace = kubernetes_namespace.spark_namespace.metadata[0].name
   }
 
-  # Optionally add a provisioner to run commands on instance creation
-  # provisioner "remote-exec" {
-  #   inline = [
-  #     "echo 'EC2 instance created!'"
-  #   ]
+  spec {
+    replicas = 2
 
-  #   connection {
-  #     type        = "ssh"
-  #     user        = "ec2-user"  # Change according to your AMI
-  #     private_key = file("${path.module}/second-test-ec2.pem")
-  #     host        = self.public_ip
-  #   }
-  # }
+    selector {
+      match_labels = {
+        app = "spark-worker"
+      }
+    }
+
+    template {
+      metadata {
+        labels = {
+          app = "spark-worker"
+        }
+      }
+
+      spec {
+        container {
+          name  = "spark-worker"
+          image = "bitnami/spark:latest"
+
+          port {
+            container_port = 8081
+          }
+        }
+      }
+    }
+  }
 }
-
-# Output the public IP of the EC2 instance
