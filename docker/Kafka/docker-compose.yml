@@ -37,4 +37,32 @@ services:
     depends_on:
       - zoo1
 
+  producer:
+    build:
+      context: ./kafka_scripts  # Path to the folder containing the Dockerfile
+    container_name: kafka_producer
+    depends_on:
+      - kafka1
+    environment:
+      KAFKA_BROKER: "kafka1:9092"
+    command: ["python", "producer.py"]
 
+  consumer:
+    build:
+      context: ./kafka_scripts
+    container_name: kafka_consumer
+    depends_on:
+      - kafka1
+    environment:
+      KAFKA_BROKER: "kafka1:9092"
+    command: ["python", "consumer.py"]
+
+  processor:
+    build:
+      context: ./kafka_scripts
+    container_name: kafka_processor
+    depends_on:
+      - kafka1
+    environment:
+      KAFKA_BROKER: "kafka1:9092"
+    command: ["python", "processor.py"]
