@@ -1,0 +1,33 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: spark-master
+  namespace: spark-cluster
+spec:
+  replicas: 1  # Typically, only one master is needed
+  selector:
+    matchLabels:
+      app: spark-master
+  template:
+    metadata:
+      labels:
+        app: spark-master
+    spec:
+      containers:
+        - name: spark-master
+          image: docker.io/bitnami/spark:latest
+          imagePullPolicy: Always
+          command:
+            - "/opt/bitnami/spark/bin/spark-class"
+          args:
+            - "org.apache.spark.deploy.master.Master"
+          ports:
+            - containerPort: 7077  # Spark master port
+            - containerPort: 8080  # Spark UI port
+          volumeMounts:
+            - name: spark-data
+              mountPath: /data/spark
+      volumes:
+        - name: spark-data
+          persistentVolumeClaim:
+            claimName: spark-pvc

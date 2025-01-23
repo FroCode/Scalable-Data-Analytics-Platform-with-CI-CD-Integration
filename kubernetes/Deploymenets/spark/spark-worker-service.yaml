@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: spark-worker-ui
+  namespace: spark-cluster  # Specify the namespace
+  labels:
+    app: spark
+spec:
+  ports:
+    - port: 4040
+      targetPort: 4040
+  selector:
+    app: spark
+    role: worker
